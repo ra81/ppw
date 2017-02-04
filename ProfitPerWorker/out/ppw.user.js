@@ -13,7 +13,7 @@ var __extends = (this && this.__extends) || function (d, b) {
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units
 // // @include        http*://virtonomic*.*/*/main/company/view/*/unit_list/employee
 // @require        https://code.jquery.com/jquery-1.11.1.min.js
-// @version        1.0
+// @version        1.1
 // ==/UserScript== 
 // 
 // Набор вспомогательных функций для использования в других проектах. Универсальные

@@ -56,11 +56,13 @@ function Start() {
     //    }
     //}
 
-    if (isUnitMain(document.location.pathname, document, true))
-        unitMain();
+    // выключено потому что надо переписать под новый интерфейс хранения данных. а вообще
+    // в юните это смотреть особо нах не надо. поэтому до лучших времен
+    //if (isUnitMain(document.location.pathname, document, true))
+    //    unitMain();
 
-    if (isUnitFinanceReport())
-        showProfitPerWorker();
+    //if (isUnitFinanceReport())
+    //    showProfitPerWorker();
 
     if (isCompanyRepByUnit())
         showPPWForAll()
@@ -249,16 +251,50 @@ function showPPWForAll() {
 
         // теперь нам бы надо считать по всем юнитам дату что хранится в локальном хранилище
         // и вывести все
-        data.forEach((val, i, arr) => {
-            let storeKey = buildStoreKey(Realm, KeyCode, val.subid);
-            let ppw = tryLoadPpw(storeKey);
-            //debugger;
-            if (ppw != null)
-                arr[i].ppw = ppw.wk > 0 ? Math.round(arr[i].profit / ppw.wk) : 0;
+        let subids = data.map(v => v.subid);
+        let ppwLoaded = loadPpw(subids);
 
-            // ячейки добавим
-            let str = sayMoney(arr[i].ppw, "$");
-            $(`<td class='nowrap' align='right'>${str}</td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+        data.forEach((val, i, arr) => {
+            let ppw = ppwLoaded[val.subid];
+
+            // в каждую ячейку добавим инфу за Х дней и цифру сколько дней есть.
+            // если данных нет, просто оставим как есть и добавим пустую ячейку для ppw
+            let htmlTpl = `<span style="display:block; color:orange; font-size:10px;">{0}</span>
+                           <span style="display:block; color:gray; font-size:10px;">{1}</span>`;
+            if (ppw != null) {
+                // доход
+                let html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.incomeTotal / ppw.employees)), sayMoney(Math.round(ppw.incomeTotal)));
+                arr[i].$r.children("td").eq(4).append(html);
+
+                // расход
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.expenseTotal / ppw.employees)), sayMoney(Math.round(ppw.expenseTotal)));
+                arr[i].$r.children("td").eq(5).append(html);
+
+                // налог
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.taxTotal / ppw.employees)), sayMoney(Math.round(ppw.taxTotal)));
+                arr[i].$r.children("td").eq(6).append(html);
+
+                //  прибыль
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.profitTotal / ppw.employees)), sayMoney(Math.round(ppw.profitTotal)));
+                arr[i].$r.children("td").eq(7).append(html);
+
+                // запишем для сортировки цифру
+                arr[i].ppw = ppw.employees > 0 ? Math.round(ppw.profitTotal / (ppw.employees * ppw.days)) : 0;
+
+                // ячейки добавим
+                $(`<td class='nowrap' align='right'>
+                    <span style="display:block;">${sayMoney(arr[i].ppw)}</span>
+                    <span style="display:block; color:gray; font-size:10px;">${ppw.employees == null ? 0 : ppw.employees} рабов</span>
+                    <span style="display:block; color:gray; font-size:10px;">${ppw.days} дней</span>
+                </td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+            }
+            else {
+                $(`<td class='nowrap' align='right'>
+                    <span style="display:block;">$0</span>
+                </td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+            }
+
+
         });
 
         function sort_table(type: Sort) {

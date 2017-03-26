@@ -11,13 +11,11 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 // @namespace      virtonomica
 // @author         ra81
 // @description    Вывод информации о прибыли на 1 рабочего для розницы
-// @include        http*://virtonomic*.*/*/main/unit/view/*
-// @include        http*://virtonomic*.*/*/main/company/view/*/unit_list
+// // @include        http*://virtonomic*.*/*/main/unit/view/*
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units/*
-// // @include        http*://virtonomic*.*/*/main/company/view/*/unit_list/employee
 // @require        https://code.jquery.com/jquery-1.11.1.min.js
-// @version        1.1
+// @version        1.2
 // ==/UserScript== 
 // 
 // Набор вспомогательных функций для использования в других проектах. Универсальные
@@ -3021,10 +3019,12 @@ function Start() {
     //            console.log(k + " " + localStorage[k]);
     //    }
     //}
-    if (isUnitMain(document.location.pathname, document, true))
-        unitMain();
-    if (isUnitFinanceReport())
-        showProfitPerWorker();
+    // выключено потому что надо переписать под новый интерфейс хранения данных. а вообще
+    // в юните это смотреть особо нах не надо. поэтому до лучших времен
+    //if (isUnitMain(document.location.pathname, document, true))
+    //    unitMain();
+    //if (isUnitFinanceReport())
+    //    showProfitPerWorker();
     if (isCompanyRepByUnit())
         showPPWForAll();
     logDebug("ppw: закончили");
@@ -3178,15 +3178,41 @@ function showPPWForAll() {
             throw new Error("не знаю что но что то пошло не так. число данных не равно числу строк");
         // теперь нам бы надо считать по всем юнитам дату что хранится в локальном хранилище
         // и вывести все
+        let subids = data.map(v => v.subid);
+        let ppwLoaded = loadPpw(subids);
         data.forEach((val, i, arr) => {
-            let storeKey = buildStoreKey(Realm, KeyCode, val.subid);
-            let ppw = tryLoadPpw(storeKey);
-            //debugger;
-            if (ppw != null)
-                arr[i].ppw = ppw.wk > 0 ? Math.round(arr[i].profit / ppw.wk) : 0;
-            // ячейки добавим
-            let str = sayMoney(arr[i].ppw, "$");
-            $(`<td class='nowrap' align='right'>${str}</td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+            let ppw = ppwLoaded[val.subid];
+            // в каждую ячейку добавим инфу за Х дней и цифру сколько дней есть.
+            // если данных нет, просто оставим как есть и добавим пустую ячейку для ppw
+            let htmlTpl = `<span style="display:block; color:orange; font-size:10px;">{0}</span>
+                           <span style="display:block; color:gray; font-size:10px;">{1}</span>`;
+            if (ppw != null) {
+                // доход
+                let html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.incomeTotal / ppw.employees)), sayMoney(Math.round(ppw.incomeTotal)));
+                arr[i].$r.children("td").eq(4).append(html);
+                // расход
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.expenseTotal / ppw.employees)), sayMoney(Math.round(ppw.expenseTotal)));
+                arr[i].$r.children("td").eq(5).append(html);
+                // налог
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.taxTotal / ppw.employees)), sayMoney(Math.round(ppw.taxTotal)));
+                arr[i].$r.children("td").eq(6).append(html);
+                //  прибыль
+                html = formatStr(htmlTpl, ppw.employees == null ? 0 : sayMoney(Math.round(ppw.profitTotal / ppw.employees)), sayMoney(Math.round(ppw.profitTotal)));
+                arr[i].$r.children("td").eq(7).append(html);
+                // запишем для сортировки цифру
+                arr[i].ppw = ppw.employees > 0 ? Math.round(ppw.profitTotal / (ppw.employees * ppw.days)) : 0;
+                // ячейки добавим
+                $(`<td class='nowrap' align='right'>
+                    <span style="display:block;">${sayMoney(arr[i].ppw)}</span>
+                    <span style="display:block; color:gray; font-size:10px;">${ppw.employees == null ? 0 : ppw.employees} рабов</span>
+                    <span style="display:block; color:gray; font-size:10px;">${ppw.days} дней</span>
+                </td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+            }
+            else {
+                $(`<td class='nowrap' align='right'>
+                    <span style="display:block;">$0</span>
+                </td>`).insertAfter(arr[i].$r.children("td").eq(profitInd));
+            }
         });
         function sort_table(type) {
             let $start = $grid.find("tbody tr").first();

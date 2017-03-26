@@ -6,14 +6,26 @@
 
 $ = jQuery = jQuery.noConflict(true);
 $xioDebug = true;
-let realm = getRealm();
-let companyId = getCompanyId();
-let keyCode = "udt";        // доп ключик для создания уникального идентификатора для хранилища
-let storageKey = buildStoreKey(realm, keyCode, getSubid());
-let gameDate = parseGameDate(document, document.location.pathname);
+let Realm = getRealmOrError();
+let CompanyId = getCompanyId();
+let KeyCode = "ppw";        // доп ключик для создания уникального идентификатора для хранилища
+let storageKey = buildStoreKey(Realm, KeyCode, getSubid());
+let GameDate = parseGameDate(document, document.location.pathname);
 interface IUnitData {
     dt: string;
     wk: number;
+}
+interface IPpwData {
+    dateStr: string;
+    finData: IFinRep;
+}
+interface IFinRep {
+    employees: number|null;  // число рабов
+    days: number;   // число дней усреднения. на новом юните 1-2 будет
+    incomeTotal: number;
+    expenseTotal: number;
+    profitTotal: number;
+    taxTotal: number;
 }
 interface ISortData {
     place: number;      // исходный номер строки в таблице
@@ -107,13 +119,17 @@ function showPPWForAll() {
             <table>
             <tbody>
                 <tr><td>Прибыль на раба</td></tr>
-                <tr><td><input id="ppwUpdate" type="button" value=" Обновить "></input></td></tr>
-                <tr><td id="errors" style="color:red;"></td></tr>
+                <tr><td>
+                    <input id="ppwUpdate" type="button" value=" Обновить " style="display:inline-block"></input>
+                    <input id="ppwClear" type="button" value=" Очистить " style="display:inline-block"></input>
+                </td></tr>
+                <tr><td id="errors" style="color:red;" colspan=2></td></tr>
             </tbody>
             </table>
         </div>`
     );
-    let $btn = $ppwPanel.find("#ppwUpdate");
+    let $updateBtn = $ppwPanel.find("#ppwUpdate");
+    let $clearBtn = $ppwPanel.find("#ppwClear");
     let $err = $ppwPanel.find("#errors");
     let appendErr = (msg: string) => {
         if ($err.find("span").length > 0)
@@ -123,24 +139,56 @@ function showPPWForAll() {
     };
     let clearErr = () => $err.children().remove();
 
-    $btn.on("click", (event) => {
+    $updateBtn.on("click", async (event) => {
         // обновим данные по рабам по всем юнитам. со страницы управления персоналом.
         // сделаем репейдж если надо, и перезагрузим страницу.
-        $btn.prop("disabled", true);
+        $updateBtn.prop("disabled", true);
         clearErr();
-        getEmployees()
-            .done((empl) => {
-                if (empl == null)
-                    throw new Error("список рабов в подразделениях null");
+        try {
+            // парсим данные с текущей страницы. не берем напрямую, так как могут быть модифицированы и не спарсится
+            let html = await tryGet_async(document.location.pathname);
+            let rep = parseFinanceRepByUnits(html, document.location.pathname);
 
-                log("got data, saving and reloading");
-                saveEmplData(empl);
-                document.location.reload();
-            })
-            .fail((err) => {
-                $btn.prop("disabled", false);
-                appendErr("Не могу получить данные по работникам. => " + err);
-            });
+            // собираем данные по всем юнитам из отчета на текущей странице
+            // записываем в хранилище и релоадим страницу, после этого данные будут отображены
+            let finData = await getFinData_async(Object.keys(rep).map(v => parseInt(v)));
+            savePpw(finData);
+            document.location.reload();
+        }
+        catch (err) {
+            appendErr("Не могу получить данные по работникам. => " + err);
+            throw err;
+        }
+        finally {
+            $updateBtn.prop("disabled", false);
+        }
+    });
+
+    $clearBtn.on("click", event => {
+
+        let removed = 0;
+        for (let key in localStorage) {
+
+            // если в ключе нет числа, не брать его
+            let m = extractIntPositive(key);
+            if (m == null)
+                continue;
+
+            // если ключик не совпадает со старым ключем для посетителей
+            // на крайняк вводим проверку на нул. Лучше здесь перебдеть а то удалит нах не то
+            let subid = m[0];
+            if (subid == null)
+                throw new Error(`subid не спарсился с ключа ${key}`);
+
+            if (key !== buildStoreKey(Realm, KeyCode, subid))
+                continue;
+
+            // ключик точно наш
+            localStorage.removeItem(key);
+            removed++;
+        }
+
+        log("удалено " + removed);
     });
 
     drawPpw();
@@ -202,7 +250,7 @@ function showPPWForAll() {
         // теперь нам бы надо считать по всем юнитам дату что хранится в локальном хранилище
         // и вывести все
         data.forEach((val, i, arr) => {
-            let storeKey = buildStoreKey(realm, keyCode, val.subid);
+            let storeKey = buildStoreKey(Realm, KeyCode, val.subid);
             let ppw = tryLoadPpw(storeKey);
             //debugger;
             if (ppw != null)
@@ -232,6 +280,117 @@ function showPPWForAll() {
     }
 }
 
+/**
+ * Собирает инфу по указанному списку юнитов
+ */
+async function getFinData_async(subids: number[]): Promise<IDictionaryN<IFinRep>> {
+    if (subids == null)
+        throw new Error("subids == null");
+
+    // подбираем сводную инфу по числу рабов в магазинах через общий отчет по персоналу
+    // и собираем финансовые данные по каждому юниту
+    let emplDict = await getEmployees();
+    let finDict = await getUnitsFin(subids);
+
+    // теперь выделяем среднее за 4 дня, суммарное за 4 дня. И на раба среднее и суммарное.
+    // считать будем все поля, хотя интересно только доходо и выручка.
+    // после парсинга у нас либо 0 элементов если юнит новый либо 4 если не новый.
+    // всегда у юнита сегодня есть расходы. нет юнитов без расходов. в прошлом расходов
+    // может и не быть ведь юнит мог быть создан вчера. тогда прошлое идет нулями
+    let res: IDictionaryN<IFinRep> = {};
+    for (let subid of subids) {
+        let data = finDict[subid];
+
+        // находим суммарные финансовые показатели за доступное число дней
+        let [inc, exp, prof, tax, days] = [0, 0, 0, 0, 0];
+        for (let item of data) {
+            if (item[1].expense === 0 && item[1].income === 0 && item[1].profit === 0 && item[1].tax === 0)
+                continue;
+
+            days++;
+            inc += item[1].income;
+            exp += item[1].expense;
+            prof += item[1].profit;
+            tax += item[1].tax;
+        }
+
+        // есть же юниты и без рабов, для них 0 рабов
+        res[subid] = {
+            employees: emplDict[subid] == null ? null : emplDict[subid].empl,
+            days: days,
+            incomeTotal: inc,
+            expenseTotal: exp,
+            profitTotal: prof,
+            taxTotal: tax
+        };
+    }
+
+    return res;
+
+
+    async function getEmployees() {
+        let url = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
+        await tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/20000`);
+        let html = await tryGet_async(url);
+        await tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/100`);
+
+        let emplDict = parseManageEmployees(html, url);
+        if (Object.keys(emplDict).length < 2)
+            throw new Error(`число юнитов со страницы персонала вышло 0, что невозможно`);
+
+        return emplDict;
+    }
+
+    async function getUnitsFin(subids: number[]) {
+        let finDict: IDictionaryN<[Date, IUnitFinance][]> = {};
+
+        for (let subid of subids) {
+            let url = `/${Realm}/main/unit/view/${subid}/finans_report`;
+            let html = await tryGet_async(url);
+            let parsed = parseUnitFinRep(html, url);
+            finDict[subid] = parsed;
+        }
+
+        return finDict;
+    }
+}
+
+function savePpw(ppw: IDictionaryN<IFinRep>) {
+    let dateStr = dateToShort(GameDate);
+    for (let key in ppw) {
+        let subid = parseInt(key);
+        let item = ppw[subid];
+        let data: IPpwData = {
+            dateStr: dateStr,
+            finData: item
+        };
+
+        let storeKey = buildStoreKey(Realm, KeyCode, subid);
+        localStorage[storeKey] = JSON.stringify(data);
+    }
+}
+
+function loadPpw(subids: number[]): IDictionaryN<IFinRep> {
+    let dict: IDictionaryN<IFinRep> = {};
+    for (let subid of subids) {
+        let storageKey = buildStoreKey(Realm, KeyCode, subid);
+        let rawPpw = localStorage.getItem(storageKey);
+        if (rawPpw == null)
+            continue;
+
+        // если дата записи не сегодня, значит данных еще нет
+        let parsedPpw = JSON.parse(rawPpw) as IPpwData;
+        if (parsedPpw.dateStr != dateToShort(GameDate))
+            continue;
+
+        dict[subid] = parsedPpw.finData;
+    }
+
+    return dict;
+}
+
+
+
 // загружает и парсит данные о рабах в юнитах со страницы управления персоналом
 function getEmployees(): JQueryPromise<IDictionaryN<IEmployeesNew>> {
 
@@ -242,7 +401,7 @@ function getEmployees(): JQueryPromise<IDictionaryN<IEmployeesNew>> {
     //    return deffered.promise();
     //}
 
-    let urlEmpl = `/${realm}/main/company/view/${companyId}/unit_list/employee`;
+    let urlEmpl = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
     getPage(urlEmpl)
         .then((html) => {
             // парсинг
@@ -272,7 +431,7 @@ function getEmployees(): JQueryPromise<IDictionaryN<IEmployeesNew>> {
 
 function saveEmplData(empl: IDictionaryN<IEmployeesNew>) {
     //debugger;
-    let dateStr = dateToShort(gameDate);
+    let dateStr = dateToShort(GameDate);
     for (let key in empl) {
         let item = empl[key];
         let udt: IUnitData = {
@@ -280,7 +439,7 @@ function saveEmplData(empl: IDictionaryN<IEmployeesNew>) {
             wk: item.empl
         };
 
-        let storeKey = buildStoreKey(realm, keyCode, item.subid);
+        let storeKey = buildStoreKey(Realm, KeyCode, item.subid);
         localStorage[storeKey] = JSON.stringify(udt);
     }
 }
@@ -293,7 +452,7 @@ function tryLoadPpw(key: string): IUnitData | null {
         return null;
 
     let data = JSON.parse(<string>rawData) as IUnitData;
-    if (data.dt != dateToShort(gameDate))
+    if (data.dt != dateToShort(GameDate))
         return null;
 
     return data;

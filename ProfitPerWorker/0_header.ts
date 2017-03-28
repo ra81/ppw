@@ -7,5 +7,5 @@
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units/*
 // @require        https://code.jquery.com/jquery-1.11.1.min.js
-// @version        1.2
+// @version        1.3
 // ==/UserScript==

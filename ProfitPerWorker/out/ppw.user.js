@@ -15,7 +15,7 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units
 // @include        http*://virtonomic*.*/*/main/company/view/*/finance_report/by_units/*
 // @require        https://code.jquery.com/jquery-1.11.1.min.js
-// @version        1.2
+// @version        1.3
 // ==/UserScript== 
 // 
 // Набор вспомогательных функций для использования в других проектах. Универсальные
@@ -70,6 +70,19 @@ var ServiceLevels;
     ServiceLevels[ServiceLevels["higher"] = 4] = "higher";
     ServiceLevels[ServiceLevels["elite"] = 5] = "elite";
 })(ServiceLevels || (ServiceLevels = {}));
+/**
+ * Простенький конвертер, который из множества формирует массив значений множества. По факту массив чисел.
+   используется внутреннее представление множеств и как бы может сломаться в будущем
+ * @param enumType тип множества
+ */
+function enum2Arr(enumType) {
+    let res = [];
+    for (let key in enumType) {
+        if (typeof enumType[key] === "number")
+            res.push(enumType[key]);
+    }
+    return res;
+}
 /**
  * Простой счетчик. Увеличивается на 1 при каждом вызове метода Next. Нужен для подсчета числа запросов
  */
@@ -514,6 +527,7 @@ let url_price_history_rx = /\/[a-z]+\/(?:main|window)\/unit\/view\/\d+\/product_
 let url_supp_rx = /\/[a-z]+\/main\/unit\/view\/\d+\/supply\/?/i; // снабжение
 let url_sale_rx = /\/[a-z]+\/main\/unit\/view\/\d+\/sale/i; // продажа склад/завод
 let url_ads_rx = /\/[a-z]+\/main\/unit\/view\/\d+\/virtasement$/i; // реклама
+let url_education_rx = /\/[a-z]+\/window\/unit\/employees\/education\/\d+\/?/i; // обучение
 let url_supply_rx = /\/[a-z]+\/unit\/supply\/create\/\d+\/step2\/?$/i; // заказ товара в маг, или склад. в общем стандартный заказ товара
 let url_equipment_rx = /\/[a-z]+\/window\/unit\/equipment\/\d+\/?$/i; // заказ оборудования на завод, лабу или куда то еще
 // для компании
@@ -1036,6 +1050,26 @@ function buildStoreKey(realm, code, subid) {
     return res;
 }
 /**
+ * Возвращает все ключи юнитов для заданного реалма и КОДА.
+ * @param realm
+ * @param storeKey код ключа sh, udd, vh итд
+ */
+function getStoredUnitsKeys(realm, storeKey) {
+    let res = [];
+    for (let key in localStorage) {
+        // если в ключе нет числа, не брать его
+        let m = extractIntPositive(key);
+        if (m == null)
+            continue;
+        // если ключик не совпадает со старым ключем для посетителей
+        let subid = m[0];
+        if (key !== buildStoreKey(realm, storeKey, subid))
+            continue;
+        res.push(key);
+    }
+    return res;
+}
+/**
  * Выводит текстовое поле, куда выводит все ключи с содержимым в формате ключ=значение|ключи=значение...
  * @param test функция возвращающая ИСТИНУ если данный ключик надо экспортить, иначе ЛОЖЬ
  * @param $place элемент страницы в который будет добавлено текстовое поле для вывода
@@ -1539,6 +1573,42 @@ function parseSalary(html, url) {
     }
     catch (err) {
         throw new ParseError("unit list", url, err);
+    }
+}
+/**
+ * /olga/window/unit/employees/education/6566432
+ * @param html
+ * @param url
+ */
+function parseEducation(html, url) {
+    let $html = $(html);
+    try {
+        // формы может не быть если обучение уже запущено
+        let $form = $html.filter("form"); // через find не находит какого то хера
+        if ($form.length <= 0)
+            return null;
+        let $tbl = oneOrError($html, "table.list");
+        let salaryNow = numberfyOrError($tbl.find("td:eq(8)").text());
+        let salaryCity = numberfyOrError($tbl.find("td:eq(9)").text().split("$")[1]);
+        let weekcost = numberfyOrError($tbl.find("#educationCost").text());
+        let employees = numberfyOrError($tbl.find("#unitEmployeesData_employees").val(), -1);
+        let emplMax = numberfyOrError($tbl.find("td:eq(2)").text().split(":")[1]);
+        let skillNow = numberfyOrError($tbl.find("span:eq(0)").text());
+        let skillCity = numberfyOrError($tbl.find("span:eq(1)").text());
+        let skillRequired = numberfyOrError($tbl.find("span:eq(2)").text(), -1); // может быть и 0
+        return [weekcost, {
+                form: $form,
+                employees: employees,
+                maxEmployees: emplMax,
+                salaryCity: salaryCity,
+                salaryNow: salaryNow,
+                skillCity: skillCity,
+                skillReq: skillRequired,
+                skillNow: skillNow
+            }];
+    }
+    catch (err) {
+        throw err;
     }
 }
 /**
@@ -3272,8 +3342,10 @@ function getFinData_async(subids) {
         return res;
         function getEmployees() {
             return __awaiter(this, void 0, void 0, function* () {
-                let url = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
+                // сброс фильтрации и пагинации
+                yield tryGet_async(`/${Realm}/main/common/util/setfiltering/dbunit/unitListWithHoliday/class=0/type=0`);
                 yield tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/20000`);
+                let url = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
                 let html = yield tryGet_async(url);
                 yield tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/100`);
                 let emplDict = parseManageEmployees(html, url);

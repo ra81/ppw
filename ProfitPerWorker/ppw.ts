@@ -365,8 +365,10 @@ async function getFinData_async(subids: number[]): Promise<IDictionaryN<IFinRep>
 
 
     async function getEmployees() {
-        let url = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
+        // сброс фильтрации и пагинации
+        await tryGet_async(`/${Realm}/main/common/util/setfiltering/dbunit/unitListWithHoliday/class=0/type=0`);
         await tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/20000`);
+        let url = `/${Realm}/main/company/view/${CompanyId}/unit_list/employee`;
         let html = await tryGet_async(url);
         await tryGet_async(`/${Realm}/main/common/util/setpaging/dbunit/unitListWithHoliday/100`);
 
